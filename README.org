@@ -259,3 +259,29 @@ You can now get the population via a sparql query
 
 #+RESULTS:
 : 18666
+
+In fact, it should be possible to write a sparql query to get multiple populations at the same time
+
+It is!
+#+begin_src python :results code
+  from SPARQLWrapper import SPARQLWrapper, JSON
+  resource_uri1 = "http://dbpedia.org/resource/Bethel_Census_Area,_Alaska"
+  resource_uri2 = "http://dbpedia.org/resource/Bethel,_Alaska"
+  sparql = SPARQLWrapper("http://dbpedia.org/sparql")
+  sparql.setQuery(f"""
+      PREFIX dbo: <http://dbpedia.org/ontology/>
+  
+      SELECT ?resource ?population WHERE {{
+          VALUES ?resource {{ <{resource_uri1}> <{resource_uri2}> }}
+          ?resource dbo:populationTotal ?population .
+      }}
+  """)
+  sparql.setReturnFormat(JSON)
+  response = sparql.query().convert()
+  return response['results']['bindings']
+#+end_src
+
+#+RESULTS:
+#+begin_src python
+[{'resource': {'type': 'uri', 'value': 'http://dbpedia.org/resource/Bethel,_Alaska'}, 'population': {'type': 'typed-literal', 'datatype': 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'value': '6325'}}, {'resource': {'type': 'uri', 'value': 'http://dbpedia.org/resource/Bethel_Census_Area,_Alaska'}, 'population': {'type': 'typed-literal', 'datatype': 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'value': '18666'}}]
+#+end_src
