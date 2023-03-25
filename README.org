@@ -1,0 +1,261 @@
+Trying to get population figures on a range of locations
+* Playground
+  :PROPERTIES:
+  :header-args:python: :python "pyenv exec poetry run python"
+  :END:
+** Census API
+   Note that the environment variable  =CENSUS_GOV_API_KEY= should be set
+  
+   #+begin_src python :var api_key=(getenv "CENSUS_GOV_API_KEY") :results output
+   import requests
+  
+   def get_population_census(city, state, api_key):
+       url = f"https://api.census.gov/data/2019/pep/population?get=NAME,POP&for=place:*&in=state:*&key={api_key}"
+       response = requests.get(url)
+  
+       if response.status_code != 200:
+           print(f"Error fetching data from Census API: {response.status_code}")
+           return None
+  
+       data = response.json()
+       city_data = [row for row in data if city.lower() in row[0].lower() and state in row[0]]
+  
+       if city_data:
+           population = city_data[0][1]
+           return population
+       else:
+           return None
+  
+   cities_and_counties = [
+       ("Northwest Arctic County", "AK"),
+       ("Petersburg County", "AK"),
+       ("Anchorage", "AK"),
+       ("Bethel", "AK"),
+       ("Fairbanks", "AK"),
+       ("Juneau, City and Borough of", "AK"),
+       ("Kenai", "AK"),
+   ]
+  
+   api_key = "YOUR_API_KEY"  # Replace with your API key
+  
+   for city, state in cities_and_counties:
+       population = get_population_census(city, state, api_key)
+       if population:
+           print(f"{city}, {state}: Population: {population}")
+       else:
+           print(f"{city}, {state}: Population data not found")
+   #+end_src
+
+ #+RESULTS:
+
+
+ To be honest, the above doesn't work all that well. It does too manhy queries (that's fixable) but the data is in a format that doesn't quite match up with the input eg
+ 
+ #+begin_src python :eval no
+   [['Bethel city, Alaska', '6586', '02', '06520'],
+    ['Kenai city, Alaska', '7807', '02', '38420']
+    ['Juneau city and borough, Alaska', '31974', '02', '36400']]
+ #+end_src
+
+I could pull down data, but would have to do something smart for matching cities and counties
+
+I *should* look into if there's actually a downloadable, open-source recommendation you can use here.
+
+** Wikipedia
+
+   Its searchable, thats the really nice thing
+   #+begin_src python
+   import wikipediaapi
+  
+   def get_population_wiki(city, lang="en"):
+       wiki = wikipediaapi.Wikipedia(lang)
+       page = wiki.page(city)
+  
+       if not page.exists():
+           return None
+  
+       summary = page.summary.split("\n")
+       population = None
+  
+       for line in summary:
+           if "population" in line.lower():
+               population = line
+               break
+  
+       return population
+  
+  
+   cities_and_counties = [
+       ("Northwest Arctic County", "AK"),
+       ("Petersburg County", "AK"),
+       ("Anchorage", "AK"),
+       ("Bethel", "AK"),
+       ("Fairbanks", "AK"),
+       ("Juneau, City and Borough of", "AK"),
+       ("Kenai", "AK"),
+   ]
+  
+   for city, state in cities_and_counties:
+       city_state = f"{city}, {state}"
+       population = get_population_wiki(city_state)
+       if population:
+           print(f"{city_state}: {population}")
+       else:
+           print(f"{city_state}: Population data not found")
+   #+end_src
+
+   #+RESULTS:
+   : None
+#+begin_src python :results code
+  import requests
+  def get_top_search_result(query):
+      url = "https://en.wikipedia.org/w/api.php"
+      params = {
+          "action": "query",
+          "list": "search",
+          "format": "json",
+          "srsearch": query,
+          "utf8": 1,
+          "formatversion": 2,
+      }
+  
+      response = requests.get(url, params=params)
+      data = response.json()
+  
+      return next(iter(data.get("query", {}).get("search", [])), None)
+  
+  return get_top_search_result("Bethel, AK")
+#+end_src
+
+#+RESULTS:
+#+begin_src python
+{'ns': 0, 'title': 'Bethel, Alaska', 'pageid': 105236, 'size': 36430, 'wordcount': 3079, 'snippet': '<span class="searchmatch">Bethel</span> (Central Yupik: Mamterilleq) is a city in <span class="searchmatch">Bethel</span> Census Area, Alaska, United States. It is the largest community on the Kuskokwim River, located', 'timestamp': '2023-02-24T20:26:54Z'}
+#+end_src
+
+** DBPedia
+   
+   Ok, heres the plan. DBPedia actually has this data in a structured format. *And* DBPedia has a way of doing fuzzy search using an endpoint like this https://lookup.dbpedia.org/api/search?query=Bethel,%20AK&maxResults=5
+   
+#+begin_src python :wrap "src xml"
+  import requests
+  import xml.dom.minidom
+  search = "Bethel, Ak"
+  url = f"https://lookup.dbpedia.org/api/search?query={search}&maxResults=2"
+  response = requests.get(url)
+  return xml.dom.minidom.parseString(response.text).toprettyxml()
+#+end_src
+
+#+RESULTS:
+#+begin_src xml
+<?xml version="1.0" ?>
+<ArrayOfResults>
+	<Result>
+		<Label>Bethel Census Area, Alaska</Label>
+		<URI>http://dbpedia.org/resource/Bethel_Census_Area,_Alaska</URI>
+		<Description>Bethel Census Area (Russian: Бетел) is a census area in the U.S. state of Alaska. As of the 2010 census, the population is 17,013. It is part of the unorganized borough and therefore has no borough seat. Its largest community is the city of Bethel, which is also the largest city in the unorganized borough.</Description>
+		<Classes>
+			<Class>
+				<Label>Administrative Region</Label>
+				<URI>http://dbpedia.org/ontology/AdministrativeRegion</URI>
+			</Class>
+			<Class>
+				<Label>Place</Label>
+				<URI>http://dbpedia.org/ontology/Place</URI>
+			</Class>
+			<Class>
+				<Label>Populated Place</Label>
+				<URI>http://dbpedia.org/ontology/PopulatedPlace</URI>
+			</Class>
+			<Class>
+				<Label>Location</Label>
+				<URI>http://dbpedia.org/ontology/Location</URI>
+			</Class>
+			<Class>
+				<Label>Region</Label>
+				<URI>http://dbpedia.org/ontology/Region</URI>
+			</Class>
+		</Classes>
+		<Categories>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:Bethel_Census_Area,_Alaska</URI>
+			</Category>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:Bering_Sea</URI>
+			</Category>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:Alaska_census_areas</URI>
+			</Category>
+		</Categories>
+		<Refcount>50</Refcount>
+	</Result>
+	<Result>
+		<Label>Bethel, Alaska</Label>
+		<URI>http://dbpedia.org/resource/Bethel,_Alaska</URI>
+		<Description>Bethel (Mamterilleq in Central Alaskan Yup'ik; Russian: Бетел) is the largest community on the Kuskokwim River, located approximately 50 mi (80 km) upriver from where the river flows into Kuskokwim Bay. Bethel is the largest community in western Alaska and in the Unorganized Borough, as well as the ninth largest in the state, with a population of 6,080 as of the 2010 Census. Annual events in Bethel include the Kuskokwim 300, a dogsled race; Camai, a Yup'ik dance festival held each spring, and the Bethel Fair held in August.</Description>
+		<Classes>
+			<Class>
+				<Label>Settlement</Label>
+				<URI>http://dbpedia.org/ontology/Settlement</URI>
+			</Class>
+			<Class>
+				<Label>City</Label>
+				<URI>http://dbpedia.org/ontology/City</URI>
+			</Class>
+			<Class>
+				<Label>Place</Label>
+				<URI>http://dbpedia.org/ontology/Place</URI>
+			</Class>
+			<Class>
+				<Label>Populated Place</Label>
+				<URI>http://dbpedia.org/ontology/PopulatedPlace</URI>
+			</Class>
+			<Class>
+				<Label>Location</Label>
+				<URI>http://dbpedia.org/ontology/Location</URI>
+			</Class>
+		</Classes>
+		<Categories>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:Cities_in_Alaska</URI>
+			</Category>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:Cities_in_Unorganized_Borough,_Alaska</URI>
+			</Category>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:Cities_in_Bethel_Census_Area,_Alaska</URI>
+			</Category>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:History_of_the_Alaska_Province_of_the_Moravian_Church</URI>
+			</Category>
+			<Category>
+				<URI>http://dbpedia.org/resource/Category:Bethel,_Alaska</URI>
+			</Category>
+		</Categories>
+		<Refcount>35</Refcount>
+	</Result>
+</ArrayOfResults>
+#+end_src
+
+Note that these search results Give you enough to both determine which is referring to a City and which is referring to a county (AdministrativeRegion) and the URI of each entity.
+
+You can now get the population via a sparql query
+#+begin_src python
+  uri = 'http://dbpedia.org/resource/Bethel_Census_Area,_Alaska'
+  from SPARQLWrapper import SPARQLWrapper, JSON
+  sparql = SPARQLWrapper("http://dbpedia.org/sparql")
+  sparql.setQuery(f"""
+      PREFIX dbo: <http://dbpedia.org/ontology/>
+  
+      SELECT ?population WHERE {{
+          <{uri}> dbo:populationTotal ?population .
+      }}
+  """)
+  sparql.setReturnFormat(JSON)
+  response = sparql.query().convert()
+  bindings = response.get('results', {}).get('bindings', [])
+  population = next((b['population']['value'] for b in bindings if 'population' in b), None)
+  return population
+#+end_src
+
+#+RESULTS:
+: 18666
