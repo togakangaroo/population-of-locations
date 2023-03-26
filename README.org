@@ -575,3 +575,7 @@ Nice. Now as far as timing
 : 2023-03-26 14:58:03,828 - INFO - Resolved population for 10 locations, failed to resolve for 0
 
 Well I'm not sure why the ~time~ command didn't work but we're seeing slightly less than 1 lookup per second. Sounds good to me. So the full script might take about 45 minutes to run.
+
+  #+begin_src emacs-lisp :results silent
+  (async-shell-command "LOG_LEVEL=DEBUG pyenv exec poetry run python ./population_of_locations.py --input-file ./data/all-data.csv" "*Getting Location Populations*")
+  #+end_src
