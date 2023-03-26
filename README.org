@@ -289,27 +289,30 @@ It is!
 
 Alright, so lets do this
 
-** Code it
-   :PROPERTIES:
-   :header-args:python+: :session populations-of-locations
-   :header-args:python+: :results silent
-   :header-args:python+: :tangle ./population_of_locations.py
-   :header-args:python+: :comments link
-   :END:
+* Code it
+:PROPERTIES:
+:header-args: :noweb strip-exports
+:header-args:python: :python "pyenv exec poetry run python"
+:header-args:python+: :session populations-of-locations
+:header-args:python+: :results silent
+:header-args:python+: :tangle ./population_of_locations.py
+:header-args:python+: :comments link
+:END:
 
-*** Prep    
+** Prep    
     #+begin_src python
   import os
   import shutil
-  
+  import logging
+
   output_dir = "output"
-  
+
   if os.path.exists(output_dir):
       shutil.rmtree(output_dir)
   os.makedirs(output_dir)
     #+end_src
     
-*** Read in Input
+** Read in Input
     Here's our sample input
     #+begin_src csv :tangle minimal-sample-input.csv
 8,AK,North Slope,County
@@ -327,7 +330,7 @@ We don't want to do the whole thing at once, I'd like to have some intermediate 
   import requests
   import csv
   from itertools import islice
-  
+
   def get_csv_input_batches(input_filename='./minimal-sample-input.csv', batch_size=100):
       csv_read_done = object()
       with open(input_filename, 'r') as input_file:
@@ -345,11 +348,148 @@ We don't want to do the whole thing at once, I'd like to have some intermediate 
 
 Lets try it out
 
-#+begin_src python :tangle no :results replace code
+#+begin_src python :tangle no :results replace code :wrap "src python :tangle no"
   list(get_csv_input_batches(batch_size=3))
 #+end_src
 
 #+RESULTS:
-#+begin_src python
+#+begin_src python :tangle no
 [[['8', 'AK', 'North Slope', 'County'], ['14', 'AK', 'Juneau, City and Borough of', 'City'], ['9', 'AK', 'Northwest Arctic', 'County']], [['10', 'AK', 'Petersburg', 'County'], ['11', 'AK', 'Anchorage', 'City'], ['12', 'AK', 'Bethel', 'City']], [['13', 'AK', 'Fairbanks', 'City']]]
 #+end_src
+
+Ok, so that works, lets do the rest of it I guess
+
+** For each batch
+#+begin_src python
+  def process_batches(batches):
+    for rows in batches:
+      identifiers_uris = get_uris_for_batch(rows)
+      identifier_populations = find_population_facts(identifiers_uris)
+      write_to_output(rows, identifier_populations)
+#+end_src
+*** For each row
+#+begin_src python 
+  def get_uris_for_batch(rows):
+    for identifier, state_code, name, city_county in rows:
+      found_results = search_for_term(f"{name}, {state_code}")
+      uri = best_matching_uri(found_results, city_county, identifier)
+      if not uri is None:
+        yield identifier, uri
+#+end_src
+
+**** Search for possible URIs
+#+begin_src python
+  import requests
+  from xml.etree import ElementTree 
+  
+  def search_for_term(term):
+    url = f"https://lookup.dbpedia.org/api/search?query={term}&maxResults=5"
+    response = requests.get(url)
+    return ElementTree.fromstring(response.content)
+#+end_src
+**** Identify best matching URI
+This depends on which are tagged City or County
+#+begin_src python
+  def best_matching_uri(tree, city_county, identifier):
+      if city_county == "City":
+          search_class_uri = ("http://dbpedia.org/ontology/City",)
+      elif city_county == "County":
+          search_class_uri = ("http://dbpedia.org/ontology/Region", "http://dbpedia.org/ontology/AdministrativeRegion")
+      else:
+          logging.error("Unknown city or county %s", city_county)
+          return None
+  
+      for result in tree.findall("Result"):
+          classes = result.find("Classes")
+          for class_element in classes.findall("Class"):
+              if class_element.find("URI").text in search_class_uri:
+                  return result.find("URI").text
+  
+      logging.error("No appropriate uri for %s found. Searched %s", identifier, ElementTree.tostring(tree,encoding='unicode'))
+      return None
+#+end_src
+Test it
+
+#+begin_src python :tangle no :results replace code :wrap "src python :tangle no"
+  rows = next(iter(get_csv_input_batches(batch_size=3)))
+  identifier_uris = list(get_uris_for_batch(rows))
+#+end_src
+
+#+RESULTS:
+#+begin_src python :tangle no
+#+end_src
+
+*** Search for population facts on all URIs
+#+begin_src python
+  from SPARQLWrapper import SPARQLWrapper, JSON
+  
+  def find_population_facts(identifiers_uris):
+    sparql = SPARQLWrapper("http://dbpedia.org/sparql")
+    formatted_uris = (f'<{uri}>' for _, uri in identifiers_uris if uri)
+    sparql.setQuery(f"""
+        PREFIX dbo: <http://dbpedia.org/ontology/>
+        PREFIX dbp: <http://dbpedia.org/property/>
+  
+        SELECT ?resource ?population WHERE {{
+            VALUES ?resource {{ {' '.join(formatted_uris)} }}
+            {{
+                ?resource dbo:populationTotal ?population .
+            }} UNION {{
+                ?resource dbp:populationTotal ?population .
+            }}
+        }}
+    """)
+    sparql.setReturnFormat(JSON)
+    response = sparql.query().convert()
+    bindings = response['results']['bindings']
+  
+    for identifier, uri in identifier_uris:
+      population = next(
+        (r.get('population', {}).get('value', None)
+         for r in bindings
+         if r.get('resource', {}).get('value', None) == uri
+         ), None)
+      if population is not None:
+        yield identifier, int(population)
+  
+#+end_src
+Test it
+
+#+begin_src python :tangle no :results replace code :wrap "src python :tangle no"
+  identifier_populations = list(find_population_facts(identifier_uris))
+  identifier_populations
+#+end_src
+
+#+RESULTS:
+#+begin_src python :tangle no
+[('8', 11031), ('14', 32255), ('9', 7793)]
+#+end_src
+
+*** Append output CSV
+#+begin_src python
+  def write_to_output(rows, identifier_populations):
+      with open('./output/with_populations.csv', 'a') as output_file:
+          output = csv.writer(output_file)
+          for identifier, *others in rows:
+              population = next((p for idnt, p in identifier_populations if idnt == identifier),
+                                None)
+              output.writerow([identifier, *others, population])
+  
+#+end_src
+We can then try it out
+
+#+begin_src python :tangle no 
+  write_to_output(rows, identifier_populations)
+#+end_src
+And that looks like this
+#+begin_src shell
+  cat ./output/with_populations.csv
+#+end_src
+
+#+RESULTS:
+|  8 | AK | North Slope                 | County | 11031 |
+| 14 | AK | Juneau, City and Borough of | City   | 32255 |
+|  9 | AK | Northwest Arctic            | County |  7793 |
+
+Nice!
+** End Reporting 
