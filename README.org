@@ -1,4 +1,21 @@
 Trying to get population figures on a range of locations
+
+Input is a csv file that looks like this
+
+    #+begin_src csv :tangle minimal-sample-input.csv
+8,AK,North Slope,County
+14,AK,"Juneau, City and Borough of",City
+9,AK,Northwest Arctic,County
+10,AK,Petersburg,County
+11,AK,Anchorage,City
+12,AK,Bethel,City
+13,AK,Fairbanks,City
+    #+end_src
+
+I create a python script where output would be a similar file that just has an additional population column. It would have the same rows as the input and where population was not able to be filled out.
+
+This was created with the [[./ai-assist][ai-assist]] from ChatGPT.
+
 * Playground
   :PROPERTIES:
   :header-args: :noweb strip-exports
@@ -327,16 +344,6 @@ And create a function to clear out output
     #+end_src
     
 ** Read in Input
-    Here's our sample input
-    #+begin_src csv :tangle minimal-sample-input.csv
-8,AK,North Slope,County
-14,AK,"Juneau, City and Borough of",City
-9,AK,Northwest Arctic,County
-10,AK,Petersburg,County
-11,AK,Anchorage,City
-12,AK,Bethel,City
-13,AK,Fairbanks,City
-    #+end_src
     
 We don't want to do the whole thing at once, I'd like to have some intermediate output
 
@@ -587,3 +594,17 @@ Well I'm not sure why the ~time~ command didn't work but we're seeing slightly l
   #+begin_src emacs-lisp :results silent
   (async-shell-command "LOG_LEVEL=DEBUG pyenv exec poetry run python ./population_of_locations.py --input-file ./data/all-data.csv" "*Getting Location Populations*")
   #+end_src
+
+Note that the ~--output-file~ parameter can be a different file and even ~/dev/stdout~ (use the ~--no-reset-output~ parameter in this case)
+* License
+[[https://opensource.org/license/mit/][MIT]]
+
+#+begin_quote
+Copyright 2023 George Mauer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#+end_quote
