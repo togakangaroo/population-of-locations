@@ -306,7 +306,7 @@ Configure logging
   import os
   import logging
   import sys
-  
+
   logging.basicConfig(
       level=os.environ.get("LOG_LEVEL", "INFO"),
       format="%(asctime)s - %(levelname)s - %(message)s",
@@ -317,12 +317,13 @@ And create a function to clear out output
 
 #+begin_src python
   import shutil
-  
-  def reset_output_dir(output_dir="output"):
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
-    logging.debug("Output directory %s reset", output_dir)
+
+  def reset_output(output_file):
+      try:
+          os.remove(output_file)
+          logging.debug("Previous output deleted %s", output_file)
+      except FileNotFoundError:
+          pass
     #+end_src
     
 ** Read in Input
@@ -343,7 +344,7 @@ We don't want to do the whole thing at once, I'd like to have some intermediate 
   import requests
   import csv
   from itertools import islice
-  
+
   def get_csv_input_batches(input_filename='./minimal-sample-input.csv', batch_size=100, skip=0, take=None):
       csv_read_done = object()
       with open(input_filename, 'r') as input_file:
@@ -397,6 +398,13 @@ Ok, so that works, lets do the rest of it I guess
     for identifier, state_code, name, city_county in rows:
       found_results = search_for_term(f"{name}, {state_code}")
       uri = best_matching_uri(found_results, city_county, identifier)
+      if uri is None:
+        # Sometimes the input will have something like "Gilbert, Town of". This screws up the search. So try again but without the second part
+        name_parts = name.split(',')
+        if len(name_parts) > 1:
+          shortened_name = ','.join(name_parts[0:-1])
+          found_results = search_for_term(f"{shortened_name}, {state_code}")
+        uri = best_matching_uri(found_results, city_county, identifier)
       if not uri is None:
         yield identifier, uri
 #+end_src
@@ -405,7 +413,7 @@ Ok, so that works, lets do the rest of it I guess
 #+begin_src python
   import requests
   from xml.etree import ElementTree 
-  
+
   def search_for_term(term):
     url = f"https://lookup.dbpedia.org/api/search?query={term}&maxResults=5"
     response = requests.get(url)
@@ -416,7 +424,7 @@ This depends on which are tagged City or County
 #+begin_src python
   def best_matching_uri(tree, city_county, identifier):
       if city_county == "City":
-          search_class_uri = ("http://dbpedia.org/ontology/City",)
+          search_class_uri = ("http://dbpedia.org/ontology/City", "http://dbpedia.org/ontology/Town", "http://dbpedia.org/ontology/Village")
       elif city_county == "County":
           search_class_uri = ("http://dbpedia.org/ontology/Region", "http://dbpedia.org/ontology/AdministrativeRegion")
       else:
@@ -427,7 +435,9 @@ This depends on which are tagged City or County
           classes = result.find("Classes")
           for class_element in classes.findall("Class"):
               if class_element.find("URI").text in search_class_uri:
-                  return result.find("URI").text
+                  uri = result.find("URI").text
+                  logging.debug("Identified %s for %s (%s)", uri, identifier, city_county)
+                  return uri
   
       logging.error("No appropriate uri for %s found. Searched %s", identifier, ElementTree.tostring(tree,encoding='unicode'))
       return None
@@ -446,7 +456,7 @@ Test it
 *** Search for population facts on all URIs
 #+begin_src python
   from SPARQLWrapper import SPARQLWrapper, JSON
-  
+
   def find_population_facts(identifiers_uris_collection):
     sparql = SPARQLWrapper("http://dbpedia.org/sparql")
     identifiers_uris = list(identifiers_uris_collection)
@@ -454,7 +464,7 @@ Test it
     query = f"""
         PREFIX dbo: <http://dbpedia.org/ontology/>
         PREFIX dbp: <http://dbpedia.org/property/>
-  
+
         SELECT ?resource ?population WHERE {{
             VALUES ?resource {{ {' '.join(formatted_uris)} }}
             {{
@@ -469,7 +479,7 @@ Test it
     logging.debug("Using SPARQL query %s", query)
     response = sparql.query().convert()
     bindings = response['results']['bindings']
-  
+
     for identifier, uri in identifiers_uris:
       population = next(
         (r.get('population', {}).get('value', None)
@@ -480,7 +490,6 @@ Test it
         yield identifier, int(population)
       else:
         logging.debug('Failed to resolve population for %s', identifier)
-  
 #+end_src
 Test it
 
@@ -500,13 +509,13 @@ Test it
   default_output_file = './output/with_populations.csv'
   def write_to_output(rows, identifier_populations_collection, output_file=default_output_file):
       output_file = output_file or default_output_file
-  
+
       identifier_populations = {}
       for identifier, population in identifier_populations_collection:
           if identifier not in identifier_populations:
             identifier_populations[identifier] = population
       logging.debug('Writing populations: %s', identifier_populations)
-      
+
       num_resolved = defaultdict(lambda: 0)
       with open(output_file, 'a') as output_file:
           output = csv.writer(output_file)
@@ -515,7 +524,6 @@ Test it
               num_resolved[population is not None] += 1
               output.writerow([identifier, *others, population])
       logging.info("Resolved population for %s locations, failed to resolve for %s", num_resolved[True], num_resolved[False])
-  
 #+end_src
 We can then try it out
 
@@ -536,22 +544,22 @@ Nice!
 ** Launcher
    #+begin_src python
   import argparse
-  
+
   parser = argparse.ArgumentParser(description="Process location populations")
   parser.add_argument("--batch-size", type=int, default=50, help="Number of location populations to resolve at a time")
   parser.add_argument("--input-file", type=str, default="./minimal-sample-input.csv", help="Path to input CSV file")
   parser.add_argument("--output-file", type=str, default="./output/with_population.csv", help="Path to write output CSV file")
   parser.add_argument("--skip", type=int, default=0, help="Number of rows to skip in the input CSV file")
   parser.add_argument("--take", type=int, default=None, help="Number of rows to process in the input CSV file")
-  parser.add_argument("--reset-output", type=bool, default=True, help="Reset the output directory by deleting contents and recreating")
-  
+  parser.add_argument("--no-reset-output", action='store_true', default=False, help="Don't reset the output directory by deleting contents and recreating")
+
   if __name__ == '__main__': 
     args = parser.parse_args()
     logging.debug('Start processing')
-  
-    if args.reset_output:
-      reset_output_dir()
-  
+
+    if not args.no_reset_output:
+      reset_output(args.output_file)
+
     batches = get_csv_input_batches(input_filename=args.input_file,
                                     batch_size=args.batch_size,
                                     skip=args.skip,

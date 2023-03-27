@@ -13,11 +13,12 @@ logging.basicConfig(
 # [[file:README.org::*Prep][Prep:2]]
 import shutil
 
-def reset_output_dir(output_dir="output"):
-  if os.path.exists(output_dir):
-      shutil.rmtree(output_dir)
-  os.makedirs(output_dir)
-  logging.debug("Output directory %s reset", output_dir)
+def reset_output(output_file):
+    try:
+        os.remove(output_file)
+        logging.debug("Previous output deleted %s", output_file)
+    except FileNotFoundError:
+        pass
 # Prep:2 ends here
 
 # [[file:README.org::*Read in Input][Read in Input:2]]
@@ -64,6 +65,13 @@ def get_uris_for_batch(rows):
   for identifier, state_code, name, city_county in rows:
     found_results = search_for_term(f"{name}, {state_code}")
     uri = best_matching_uri(found_results, city_county, identifier)
+    if uri is None:
+      # Sometimes the input will have something like "Gilbert, Town of". This screws up the search. So try again but without the second part
+      name_parts = name.split(',')
+      if len(name_parts) > 1:
+        shortened_name = ','.join(name_parts[0:-1])
+        found_results = search_for_term(f"{shortened_name}, {state_code}")
+      uri = best_matching_uri(found_results, city_county, identifier)
     if not uri is None:
       yield identifier, uri
 # For each row:1 ends here
@@ -81,7 +89,7 @@ def search_for_term(term):
 # [[file:README.org::*Identify best matching URI][Identify best matching URI:1]]
 def best_matching_uri(tree, city_county, identifier):
     if city_county == "City":
-        search_class_uri = ("http://dbpedia.org/ontology/City",)
+        search_class_uri = ("http://dbpedia.org/ontology/City", "http://dbpedia.org/ontology/Town", "http://dbpedia.org/ontology/Village")
     elif city_county == "County":
         search_class_uri = ("http://dbpedia.org/ontology/Region", "http://dbpedia.org/ontology/AdministrativeRegion")
     else:
@@ -92,7 +100,9 @@ def best_matching_uri(tree, city_county, identifier):
         classes = result.find("Classes")
         for class_element in classes.findall("Class"):
             if class_element.find("URI").text in search_class_uri:
-                return result.find("URI").text
+                uri = result.find("URI").text
+                logging.debug("Identified %s for %s (%s)", uri, identifier, city_county)
+                return uri
 
     logging.error("No appropriate uri for %s found. Searched %s", identifier, ElementTree.tostring(tree,encoding='unicode'))
     return None
@@ -167,14 +177,14 @@ parser.add_argument("--input-file", type=str, default="./minimal-sample-input.cs
 parser.add_argument("--output-file", type=str, default="./output/with_population.csv", help="Path to write output CSV file")
 parser.add_argument("--skip", type=int, default=0, help="Number of rows to skip in the input CSV file")
 parser.add_argument("--take", type=int, default=None, help="Number of rows to process in the input CSV file")
-parser.add_argument("--reset-output", type=bool, default=True, help="Reset the output directory by deleting contents and recreating")
+parser.add_argument("--no-reset-output", action='store_true', default=False, help="Don't reset the output directory by deleting contents and recreating")
 
 if __name__ == '__main__': 
   args = parser.parse_args()
   logging.debug('Start processing')
 
-  if args.reset_output:
-    reset_output_dir()
+  if not args.no_reset_output:
+    reset_output(args.output_file)
 
   batches = get_csv_input_batches(input_filename=args.input_file,
                                   batch_size=args.batch_size,
